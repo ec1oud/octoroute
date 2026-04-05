@@ -670,10 +670,14 @@ impl HealthChecker {
             })?;
 
         // IMPORTANT: Health check URL construction
-        // Config validation (config.rs:523-534) ENFORCES that base_url ends with "/v1"
-        // (e.g., "http://host:port/v1"). We append "/models" to get "http://host:port/v1/models"
-        // DO NOT append "/v1/models" - config validation prevents this but historically
-        // this bug caused all endpoints to fail after 90 seconds.
+        //
+        // The health check endpoint depends on the API type of the endpoint:
+        // - OpenAI-compatible endpoints (default): checks GET /v1/models
+        //   - base_url must end with /v1 (e.g., "http://host:port/v1")
+        //   - Health URL: {base_url} (which resolves to /v1/models)
+        // - Ollama endpoints: checks GET /api/tags
+        //   - base_url must NOT end with /v1 (e.g., "http://host:11434")
+        //   - Health URL: {base_url}/api/tags
         //
         // HISTORICAL BUG (Jan 2025): base_url without /v1 suffix caused "/models" → 404
         // FIX: Config validation now enforces base_url ends with /v1 (config.rs:527-534)
@@ -699,7 +703,10 @@ impl HealthChecker {
             });
         }
 
-        let url = format!("{}/models", base_url);
+        // Get the appropriate health check URL based on API type
+        // - OpenAI endpoints (default): GET /v1/models
+        // - Ollama endpoints: GET /api/tags
+        let url = endpoint.health_check_url();
 
         match client.head(&url).send().await {
             Ok(response) => {

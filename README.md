@@ -252,6 +252,7 @@ for chunk in stream:
 |----------|--------|-------------|
 | `/v1/chat/completions` | POST | Chat completions (streaming & non-streaming) |
 | `/v1/models` | GET | List available models and tiers |
+| `/api/tags` | GET | Ollama-compatible model listing |
 
 See [API Reference](docs/api-reference.md) for complete documentation.
 

@@ -12,6 +12,7 @@ pub mod chat;
 pub mod health;
 pub mod metrics;
 pub mod models;
+pub mod ollama;
 pub mod openai;
 
 /// Application state shared across all handlers

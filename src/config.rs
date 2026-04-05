@@ -61,6 +61,12 @@ pub struct ModelEndpoint {
     /// Priority level - higher priority endpoints are tried first
     #[serde(default = "default_priority")]
     priority: u8,
+    /// API type: "openai" (default) or "ollama"
+    /// Determines which health check endpoint to use:
+    /// - "openai": checks GET /v1/models
+    /// - "ollama": checks GET /api/tags
+    #[serde(default = "default_api_type")]
+    api_type: String,
 }
 
 impl ModelEndpoint {
@@ -93,6 +99,31 @@ impl ModelEndpoint {
     pub fn priority(&self) -> u8 {
         self.priority
     }
+
+    /// Get the API type ("openai" or "ollama")
+    pub fn api_type(&self) -> &str {
+        &self.api_type
+    }
+
+    /// Get the health check URL for this endpoint
+    pub fn health_check_url(&self) -> String {
+        match self.api_type.as_str() {
+            "ollama" => {
+                // Ollama's /api/tags endpoint is at the root level, not under /v1
+                // Strip /v1 suffix if present for native health check
+                let host_part = self.base_url.strip_suffix("/v1").unwrap_or(&self.base_url);
+                format!("{}/api/tags", host_part)
+            }
+            _ => {
+                // OpenAI-compatible endpoints
+                if self.base_url.ends_with("/v1") {
+                    format!("{}/models", self.base_url)
+                } else {
+                    format!("{}/v1/models", self.base_url)
+                }
+            }
+        }
+    }
 }
 
 fn default_temperature() -> f64 {
@@ -105,6 +136,10 @@ fn default_weight() -> f64 {
 
 fn default_priority() -> u8 {
     1
+}
+
+fn default_api_type() -> String {
+    "openai".to_string()
 }
 
 /// Router query timeout configuration per tier
@@ -1211,7 +1246,200 @@ strategy = "rule"
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("base_url"));
         assert!(err_msg.contains("/v1"));
-        assert!(err_msg.contains("OpenAI API"));
+        assert!(err_msg.contains("OpenAI") || err_msg.contains("API compatibility"));
+    }
+
+    #[test]
+    fn test_ollama_api_type_config_validates_correctly() {
+        // Test that Ollama endpoints (with /v1 suffix) are accepted with api_type = "ollama"
+        let config_str = r#"
+            [server]
+            host = "0.0.0.0"
+            port = 3000
+            request_timeout_seconds = 30
+
+            [[models.fast]]
+            name = "ollama-llama3"
+            base_url = "http://localhost:11434/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+            api_type = "ollama"
+
+            [[models.balanced]]
+            name = "bal-endpoint-1"
+            base_url = "http://localhost:8080/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+
+            [[models.deep]]
+            name = "deep-endpoint-1"
+            base_url = "http://localhost:9090/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+
+            [routing]
+            strategy = "rule"
+            router_tier = "fast"
+        "#;
+
+        let config = Config::from_str(config_str).expect("Ollama config should parse");
+        let result = config.validate();
+        assert!(
+            result.is_ok(),
+            "Ollama endpoint config should be valid, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_ollama_api_type_requires_v1_suffix() {
+        // Test that Ollama endpoints without /v1 suffix are rejected
+        let config_str = r#"
+            [server]
+            host = "0.0.0.0"
+            port = 3000
+            request_timeout_seconds = 30
+
+            [[models.fast]]
+            name = "ollama-llama3"
+            base_url = "http://localhost:11434"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+            api_type = "ollama"
+
+            [[models.balanced]]
+            name = "bal-endpoint-1"
+            base_url = "http://localhost:8080/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+
+            [[models.deep]]
+            name = "deep-endpoint-1"
+            base_url = "http://localhost:9090/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+
+            [routing]
+            strategy = "rule"
+            router_tier = "fast"
+        "#;
+
+        let result = Config::from_str(config_str);
+        assert!(
+            result.is_err(),
+            "Ollama endpoint without /v1 suffix should be rejected"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("must end with '/v1'") || err_msg.contains("OpenAI-compatible mode")
+        );
+    }
+
+    #[test]
+    fn test_health_check_url_ollama() {
+        let config_str = r#"
+            [server]
+            host = "0.0.0.0"
+            port = 3000
+            request_timeout_seconds = 30
+
+            [[models.fast]]
+            name = "ollama-llama3"
+            base_url = "http://localhost:11434/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+            api_type = "ollama"
+
+            [[models.balanced]]
+            name = "bal-endpoint-1"
+            base_url = "http://localhost:8080/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+
+            [[models.deep]]
+            name = "deep-endpoint-1"
+            base_url = "http://localhost:9090/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+
+            [routing]
+            strategy = "rule"
+            router_tier = "fast"
+        "#;
+
+        let config = Config::from_str(config_str).expect("Ollama config should parse");
+        let endpoint = &config.models.fast[0];
+
+        // Verify health check URL uses /api/tags for Ollama
+        assert_eq!(
+            endpoint.health_check_url(),
+            "http://localhost:11434/v1/api/tags"
+        );
+    }
+
+    #[test]
+    fn test_health_check_url_openai() {
+        let config_str = r#"
+            [server]
+            host = "0.0.0.0"
+            port = 3000
+            request_timeout_seconds = 30
+
+            [[models.fast]]
+            name = "openai-qwen"
+            base_url = "http://localhost:8080/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+
+            [[models.balanced]]
+            name = "bal-endpoint-1"
+            base_url = "http://localhost:8081/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+
+            [[models.deep]]
+            name = "deep-endpoint-1"
+            base_url = "http://localhost:8082/v1"
+            max_tokens = 4096
+            temperature = 0.7
+            weight = 1.0
+            priority = 1
+
+            [routing]
+            strategy = "rule"
+            router_tier = "fast"
+        "#;
+
+        let config = Config::from_str(config_str).expect("OpenAI config should parse");
+        let endpoint = &config.models.fast[0];
+
+        // Verify health check URL uses /v1/models for OpenAI (default)
+        assert_eq!(
+            endpoint.health_check_url(),
+            "http://localhost:8080/v1/models"
+        );
     }
 
     #[test]

@@ -9,8 +9,9 @@ Complete HTTP API documentation for Octoroute.
 1. [Overview](#overview)
 2. [Request/Response Format](#requestresponse-format)
 3. [Endpoints](#endpoints)
-4. [Error Responses](#error-responses)
-5. [Examples](#examples)
+4. [Ollama-Compatible `/api/tags`](#ollama-compatible-apitag)
+5. [Error Responses](#error-responses)
+6. [Examples](#examples)
 
 ---
 
@@ -191,6 +192,53 @@ List all configured model endpoints with health status.
 **Note on Health Reporting**:
 
 On server startup, all endpoints initialize as `healthy: true` with `last_check_seconds_ago` reflecting time since process start. This optimistic health status remains until the first background health check runs (~30 seconds after boot) or a user request updates the status. For the first 30 seconds of operation, health data should be considered provisional until actual endpoint probes complete.
+
+#### Status Codes
+
+- `200 OK`: Models list retrieved successfully
+
+---
+
+### GET /api/tags
+
+Ollama-compatible endpoint for listing available models.
+
+#### Response Body
+
+```json
+{
+  "models": [
+    {
+      "name": "string",
+      "digest": "string",
+      "size": 0,
+      "format": "gguf",
+      "parameter_size": "unknown",
+      "quantization_level": "unknown"
+    }
+  ]
+}
+```
+
+**Fields**:
+
+- `models` (array): List of model objects
+  - `name` (string): Model name (e.g., "auto", "qwen3-8b-instruct")
+  - `digest` (string): Fake SHA256 digest (for Ollama compatibility)
+  - `size` (integer): Size in bytes (reported as 0 for Octoroute models)
+  - `format` (string): Model format (default: "gguf")
+  - `family` (string, optional): Model family (not tracked, omitted)
+  - `families` (array, optional): Model families (not tracked, omitted)
+  - `parameter_size` (string): Parameter size (reported as "unknown")
+  - `quantization_level` (string): Quantization level (reported as "unknown")
+
+**Note**: This endpoint is Ollama-compatible and primarily serves clients that expect to discover available models via this API (e.g., VS Code extensions, GUI tools). The `size`, `parameter_size`, and `quantization_level` fields are reported as unknown or empty since Octoroute doesn't track these attributes.
+
+#### Available Models
+
+The endpoint returns:
+- Tier-based virtual models: `auto`, `fast`, `balanced`, `deep`
+- All configured endpoint names from your `config.toml`
 
 #### Status Codes
 
