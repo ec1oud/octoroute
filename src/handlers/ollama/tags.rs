@@ -28,11 +28,13 @@ pub struct ApiTagModel {
 }
 
 impl ApiTagModel {
-    /// Create a new API tag model
-    pub fn new(name: impl Into<String>) -> Self {
+    /// Create a new API tag model with optional cached digest
+    pub fn new(name: impl Into<String>, cached_digest: Option<&str>) -> Self {
         let name = name.into();
-        // Generate a fake digest (in practice, this would be a hash)
-        let digest = format!("sha256:{}", hex_digest(&name));
+        // Use cached real digest if available, otherwise generate a fake one
+        let digest = cached_digest
+            .map(|d| d.to_string())
+            .unwrap_or_else(|| format!("sha256:{}", hex_digest(&name)));
 
         Self {
             name,
@@ -48,9 +50,7 @@ impl ApiTagModel {
 }
 
 /// Generate a fake deterministic digest for a model name
-/// This is just for compatibility - we don't actually track digests
-/// TODO in the health check, parse the JSON and cache the hash
-/// so we can return it when answering an /api/tags request
+/// This is used as a fallback when no real digest is cached
 fn hex_digest(s: &str) -> String {
     // Use a simple hash for deterministic but unique-looking digests
     use std::collections::hash_map::DefaultHasher;
@@ -83,23 +83,44 @@ fn hex_digest(s: &str) -> String {
 /// - Tier-based virtual models: `auto`, `fast`, `balanced`, `deep`
 /// - All configured endpoint names from the config file
 pub async fn handler(State(state): State<AppState>) -> impl IntoResponse {
-    let mut models = Vec::new();
+    // Get the hash cache to look up real digests
+    let hash_cache = state.hash_cache();
+    let hash_cache_guard = hash_cache.read().await;
 
-    // Add tier-based virtual models
-    for tier in ["auto", "fast", "balanced", "deep"] {
-        models.push(ApiTagModel::new(tier));
-    }
+    let models = {
+        // Scope block to ensure the guard lives for the entire model population
+        let mut models = Vec::new();
 
-    // Add configured endpoint names from each tier
-    for endpoint in &state.config().models.fast {
-        models.push(ApiTagModel::new(endpoint.name()));
-    }
-    for endpoint in &state.config().models.balanced {
-        models.push(ApiTagModel::new(endpoint.name()));
-    }
-    for endpoint in &state.config().models.deep {
-        models.push(ApiTagModel::new(endpoint.name()));
-    }
+        // Get cached digest helper - closure captures hash_cache_guard
+        let get_digest = |name: &str| hash_cache_guard.get(name).map(|s| s.as_str());
+
+        // Add tier-based virtual models
+        for tier in ["auto", "fast", "balanced", "deep"] {
+            models.push(ApiTagModel::new(tier, get_digest(tier)));
+        }
+
+        // Add configured endpoint names from each tier
+        for endpoint in &state.config().models.fast {
+            models.push(ApiTagModel::new(
+                endpoint.name(),
+                get_digest(endpoint.name()),
+            ));
+        }
+        for endpoint in &state.config().models.balanced {
+            models.push(ApiTagModel::new(
+                endpoint.name(),
+                get_digest(endpoint.name()),
+            ));
+        }
+        for endpoint in &state.config().models.deep {
+            models.push(ApiTagModel::new(
+                endpoint.name(),
+                get_digest(endpoint.name()),
+            ));
+        }
+
+        models
+    };
 
     Json(TagsListResponse { models })
 }
@@ -110,7 +131,7 @@ mod tests {
 
     #[test]
     fn test_api_tag_model_creation() {
-        let model = ApiTagModel::new("qwen3-8b");
+        let model = ApiTagModel::new("qwen3-8b", None);
         assert_eq!(model.name, "qwen3-8b");
         assert!(model.digest.starts_with("sha256:"));
         assert_eq!(model.format, "gguf");
@@ -118,8 +139,19 @@ mod tests {
     }
 
     #[test]
+    fn test_api_tag_model_with_cached_digest() {
+        let cached = "sha256:abc123def456";
+        let model = ApiTagModel::new("qwen3-8b", Some(cached));
+        assert_eq!(model.name, "qwen3-8b");
+        assert_eq!(model.digest, cached);
+    }
+
+    #[test]
     fn test_tags_list_response() {
-        let models = vec![ApiTagModel::new("auto"), ApiTagModel::new("qwen3-8b")];
+        let models = vec![
+            ApiTagModel::new("auto", None),
+            ApiTagModel::new("qwen3-8b", None),
+        ];
         let response = TagsListResponse { models };
         assert_eq!(response.models.len(), 2);
     }

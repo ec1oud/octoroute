@@ -4,9 +4,18 @@ use crate::config::{Config, RoutingStrategy};
 use crate::error::{AppError, AppResult};
 use crate::models::ModelSelector;
 use crate::router::{HybridRouter, LlmBasedRouter, Router, RuleBasedRouter};
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 type MetricsHandle = Arc<crate::metrics::Metrics>;
+
+/// Cache for model digests (hashes) from Ollama endpoints
+///
+/// Maps model names to their real SHA256 digests as reported by Ollama.
+/// This is populated during health checks and used by the /api/tags endpoint
+/// to return accurate hashes that clients like Zed can verify.
+pub type HashCache = Arc<RwLock<HashMap<String, String>>>;
 
 pub mod chat;
 pub mod health;
@@ -38,6 +47,8 @@ pub struct AppState {
     selector: Arc<ModelSelector>,
     router: Arc<Router>,
     metrics: Arc<crate::metrics::Metrics>,
+    /// Cache of real model digests from Ollama endpoints
+    hash_cache: HashCache,
 }
 
 impl AppState {
@@ -59,8 +70,15 @@ impl AppState {
             Arc::new(m)
         };
 
+        // Create the hash cache for storing real model digests from Ollama endpoints
+        let hash_cache = Arc::new(RwLock::new(HashMap::new()));
+
         // Create selector with metrics integration for health tracking
-        let selector = Arc::new(ModelSelector::new(config.clone(), metrics.clone()));
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            metrics.clone(),
+            hash_cache.clone(),
+        ));
 
         // Construct router based on config.routing.strategy
         let router = match config.routing.strategy {
@@ -114,6 +132,7 @@ impl AppState {
             selector,
             router,
             metrics,
+            hash_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -142,6 +161,15 @@ impl AppState {
     /// Metrics are always enabled for observability.
     pub fn metrics(&self) -> MetricsHandle {
         self.metrics.clone()
+    }
+
+    /// Get reference to the hash cache
+    ///
+    /// The hash cache stores real SHA256 digests from Ollama endpoints,
+    /// populated during health checks. Used by /api/tags to return
+    /// accurate model hashes.
+    pub fn hash_cache(&self) -> HashCache {
+        Arc::clone(&self.hash_cache)
     }
 }
 

@@ -9,6 +9,14 @@ fn mock_metrics() -> Arc<crate::metrics::Metrics> {
     Arc::new(crate::metrics::Metrics::new().unwrap())
 }
 
+/// Helper to create a hash cache for tests
+fn test_hash_cache() -> crate::handlers::HashCache {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    Arc::new(RwLock::new(HashMap::new()))
+}
+
 #[tokio::test]
 async fn test_new_validates_balanced_tier_exists_via_selector() {
     // LlmBasedRouter requires at least one balanced tier endpoint
@@ -54,7 +62,11 @@ router_tier = "balanced"
 
     let config: Config = toml::from_str(config_toml).expect("should parse config");
     let config = Arc::new(config);
-    let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+    let selector = Arc::new(ModelSelector::new(
+        config.clone(),
+        mock_metrics(),
+        test_hash_cache(),
+    ));
 
     // Verify selector has balanced endpoints
     assert_eq!(selector.endpoint_count(TargetModel::Balanced), 1);
@@ -138,9 +150,13 @@ default_importance = "normal"
 router_tier = "balanced"
 "#;
 
-    let config: crate::config::Config = toml::from_str(config_toml).expect("should parse config");
+    let config: Config = toml::from_str(config_toml).expect("should parse config");
     let config = Arc::new(config);
-    let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+    let selector = Arc::new(ModelSelector::new(
+        config.clone(),
+        mock_metrics(),
+        test_hash_cache(),
+    ));
 
     // This should succeed because there is a balanced tier endpoint
     let result = LlmBasedRouter::new(selector, TargetModel::Balanced, 10, mock_metrics());

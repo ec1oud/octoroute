@@ -352,6 +352,8 @@ pub struct HealthChecker {
     app_metrics: Option<Arc<crate::metrics::Metrics>>,
     /// Background health checking task handle for graceful shutdown
     background_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Cache for real model digests from Ollama endpoints
+    hash_cache: crate::handlers::HashCache,
 }
 
 impl std::fmt::Debug for HealthChecker {
@@ -369,13 +371,14 @@ impl std::fmt::Debug for HealthChecker {
                 },
             )
             .field("background_task", &"<Mutex<JoinHandle>>")
+            .field("hash_cache", &"<HashCache>")
             .finish()
     }
 }
 
 impl HealthChecker {
     /// Create a new HealthChecker with all endpoints starting as healthy
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: Arc<Config>, hash_cache: crate::handlers::HashCache) -> Self {
         let mut health_status = HashMap::new();
 
         // Initialize all fast endpoints
@@ -413,6 +416,7 @@ impl HealthChecker {
             metrics: Arc::new(HealthMetrics::new()),
             app_metrics: None,
             background_task: Arc::new(Mutex::new(None)),
+            hash_cache,
         }
     }
 
@@ -426,17 +430,20 @@ impl HealthChecker {
     /// # Arguments
     /// * `config` - Application configuration with model endpoints
     /// * `app_metrics` - Prometheus metrics collector for surfacing failures
+    /// * `hash_cache` - Cache for real model digests from Ollama endpoints
     ///
     /// # Example
     /// ```ignore
     /// let config = Arc::new(Config::load()?);
     /// let metrics = Arc::new(Metrics::new()?);
-    /// let checker = Arc::new(HealthChecker::new_with_metrics(config, metrics));
+    /// let hash_cache = Arc::new(RwLock::new(HashMap::new()));
+    /// let checker = Arc::new(HealthChecker::new_with_metrics(config, metrics, hash_cache));
     /// checker.start_background_checks();
     /// ```
     pub fn new_with_metrics(
         config: Arc<Config>,
         app_metrics: Arc<crate::metrics::Metrics>,
+        hash_cache: crate::handlers::HashCache,
     ) -> Self {
         let mut health_status = HashMap::new();
 
@@ -476,6 +483,7 @@ impl HealthChecker {
             metrics: Arc::new(HealthMetrics::new()),
             app_metrics: Some(app_metrics),
             background_task: Arc::new(Mutex::new(None)),
+            hash_cache,
         }
     }
 
@@ -650,6 +658,9 @@ impl HealthChecker {
 
     /// Check a single endpoint's health via HTTP HEAD request
     ///
+    /// For Ollama endpoints, this also fetches and caches the real model digests
+    /// from the /api/tags response to provide accurate hashes in /api/tags requests.
+    ///
     /// Returns:
     /// - `Ok(true)` if endpoint is healthy (2xx response)
     /// - `Ok(false)` if endpoint is unhealthy (non-2xx, timeout, connection error)
@@ -708,26 +719,93 @@ impl HealthChecker {
         // - Ollama endpoints: GET /api/tags
         let url = endpoint.health_check_url();
 
-        match client.head(&url).send().await {
-            Ok(response) => {
-                let is_success = response.status().is_success();
-                tracing::debug!(
-                    endpoint_name = %endpoint.name(),
-                    url = %url,
-                    status = %response.status(),
-                    healthy = is_success,
-                    "Health check completed"
-                );
-                Ok(is_success)
+        // For Ollama endpoints, fetch the full /api/tags response to get real digests
+        if endpoint.api_type() == "ollama" {
+            match client.get(&url).send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    let is_success = status.is_success();
+                    if is_success {
+                        // Try to parse the response and cache real digests
+                        if let Ok(body) = response.json::<serde_json::Value>().await {
+                            self.cache_ollama_hashes(&body).await;
+                        }
+                    }
+                    tracing::debug!(
+                        endpoint_name = %endpoint.name(),
+                        url = %url,
+                        status = %status,
+                        healthy = is_success,
+                        "Health check completed (Ollama)"
+                    );
+                    Ok(is_success)
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        endpoint_name = %endpoint.name(),
+                        url = %url,
+                        error = %e,
+                        "Health check failed (Ollama)"
+                    );
+                    Ok(false)
+                }
             }
-            Err(e) => {
-                tracing::debug!(
-                    endpoint_name = %endpoint.name(),
-                    url = %url,
-                    error = %e,
-                    "Health check failed"
-                );
-                Ok(false)
+        } else {
+            // For OpenAI endpoints, use HEAD request (lighter)
+            match client.head(&url).send().await {
+                Ok(response) => {
+                    let is_success = response.status().is_success();
+                    tracing::debug!(
+                        endpoint_name = %endpoint.name(),
+                        url = %url,
+                        status = %response.status(),
+                        healthy = is_success,
+                        "Health check completed (OpenAI)"
+                    );
+                    Ok(is_success)
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        endpoint_name = %endpoint.name(),
+                        url = %url,
+                        error = %e,
+                        "Health check failed (OpenAI)"
+                    );
+                    Ok(false)
+                }
+            }
+        }
+    }
+
+    /// Parse Ollama /api/tags response and cache model digests
+    ///
+    /// The response format is:
+    /// ```json
+    /// {
+    ///   "models": [
+    ///     {
+    ///       "name": "llama3.2",
+    ///       "digest": "sha256:abc123...",
+    ///       ...
+    ///     }
+    ///   ]
+    /// }
+    /// ```
+    async fn cache_ollama_hashes(&self, response: &serde_json::Value) {
+        if let Some(models) = response.get("models").and_then(|m| m.as_array()) {
+            let mut cache = self.hash_cache.write().await;
+            for model in models {
+                if let (Some(name), Some(digest)) = (
+                    model.get("name").and_then(|n| n.as_str()),
+                    model.get("digest").and_then(|d| d.as_str()),
+                ) {
+                    cache.insert(name.to_string(), digest.to_string());
+                    tracing::debug!(
+                        model_name = %name,
+                        digest = %digest,
+                        "Cached real digest from Ollama endpoint"
+                    );
+                }
             }
         }
     }
@@ -1086,10 +1164,19 @@ router_tier = "balanced"
         toml::from_str(toml).expect("should parse TOML config")
     }
 
+    /// Helper to create a hash cache for tests
+    fn test_hash_cache() -> crate::handlers::HashCache {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+        Arc::new(RwLock::new(HashMap::new()))
+    }
+
     #[tokio::test]
     async fn test_health_checker_new_initializes_all_healthy() {
         let config = Arc::new(create_test_config());
-        let checker = HealthChecker::new(config);
+        let hash_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, hash_cache);
 
         // All endpoints should start as healthy
         assert!(checker.is_healthy("fast-1").await);
@@ -1101,7 +1188,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_unknown_endpoint_is_unhealthy() {
         let config = Arc::new(create_test_config());
-        let checker = HealthChecker::new(config);
+        let hash_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, hash_cache);
 
         // Unknown endpoint should be considered unhealthy
         assert!(!checker.is_healthy("unknown-endpoint").await);
@@ -1110,7 +1198,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_mark_failure_tracks_consecutive() {
         let config = Arc::new(create_test_config());
-        let checker = HealthChecker::new(config);
+        let hash_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, hash_cache);
 
         // Should still be healthy after 1-2 failures
         checker.mark_failure("fast-1").await.unwrap();
@@ -1127,7 +1216,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_mark_success_recovers() {
         let config = Arc::new(create_test_config());
-        let checker = HealthChecker::new(config);
+        let hash_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, hash_cache);
 
         // Mark unhealthy with 3 failures
         checker.mark_failure("fast-1").await.unwrap();
@@ -1148,7 +1238,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_get_all_statuses_returns_all_endpoints() {
         let config = Arc::new(create_test_config());
-        let checker = HealthChecker::new(config);
+        let hash_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, hash_cache);
 
         let statuses = checker.get_all_statuses().await;
 
@@ -1166,7 +1257,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_success_resets_partial_failures() {
         let config = Arc::new(create_test_config());
-        let checker = HealthChecker::new(config);
+        let hash_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, hash_cache);
 
         // 2 failures (not enough to mark unhealthy)
         checker.mark_failure("fast-1").await.unwrap();

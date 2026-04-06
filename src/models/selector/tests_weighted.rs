@@ -9,6 +9,14 @@ use super::*;
 fn test_metrics() -> Arc<crate::metrics::Metrics> {
     Arc::new(crate::metrics::Metrics::new().expect("should create metrics"))
 }
+
+/// Helper to create a hash cache for tests
+fn test_hash_cache() -> crate::handlers::HashCache {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    Arc::new(RwLock::new(HashMap::new()))
+}
 use crate::models::endpoint_name::ExclusionSet;
 use crate::models::selector::ModelSelector;
 use crate::router::TargetModel;
@@ -17,7 +25,7 @@ use std::sync::Arc;
 #[tokio::test]
 async fn test_selector_weighted_fast_tier_both_endpoints_selectable() {
     let config = Arc::new(create_test_config());
-    let selector = ModelSelector::new(config, test_metrics());
+    let selector = ModelSelector::new(config, test_metrics(), test_hash_cache());
 
     // With equal weights (1.0 each), both endpoints should be selectable
     // Sample 100 times to verify both can be selected
@@ -90,7 +98,7 @@ strategy = "rule"
 router_tier = "balanced"
 "#;
     let config: Config = toml::from_str(toml_config).expect("should parse TOML");
-    let selector = ModelSelector::new(Arc::new(config), test_metrics());
+    let selector = ModelSelector::new(Arc::new(config), test_metrics(), test_hash_cache());
 
     // Should panic when all weights are zero - this indicates memory corruption
     // Config validation prevents this at startup, so reaching this code is a critical error
@@ -137,7 +145,7 @@ strategy = "rule"
 router_tier = "balanced"
 "#;
     let config: Config = toml::from_str(toml_config).expect("should parse TOML");
-    let selector = ModelSelector::new(Arc::new(config), test_metrics());
+    let selector = ModelSelector::new(Arc::new(config), test_metrics(), test_hash_cache());
 
     // Should panic when all weights are negative - this indicates memory corruption
     // Config validation prevents this at startup, so reaching this code is a critical error
@@ -182,7 +190,7 @@ strategy = "rule"
 router_tier = "balanced"
 "#;
     let config: Config = toml::from_str(toml_config).expect("should parse TOML");
-    let selector = ModelSelector::new(Arc::new(config), test_metrics());
+    let selector = ModelSelector::new(Arc::new(config), test_metrics(), test_hash_cache());
 
     // Sample 3000 times to get statistically significant distribution
     let no_exclude = ExclusionSet::new();
@@ -248,7 +256,7 @@ strategy = "rule"
 router_tier = "balanced"
 "#;
     let config: Config = toml::from_str(toml_config).expect("should parse TOML");
-    let selector = ModelSelector::new(Arc::new(config), test_metrics());
+    let selector = ModelSelector::new(Arc::new(config), test_metrics(), test_hash_cache());
 
     // Sample 1000 times
     let no_exclude = ExclusionSet::new();
@@ -283,7 +291,7 @@ async fn test_weighted_selection_all_equal_weights() {
     // When all weights are equal, should behave like uniform distribution
     let config = create_test_config(); // Both have weight 1.0
 
-    let selector = ModelSelector::new(Arc::new(config), test_metrics());
+    let selector = ModelSelector::new(Arc::new(config), test_metrics(), test_hash_cache());
 
     // Sample 2000 times
     let no_exclude = ExclusionSet::new();
@@ -355,7 +363,7 @@ strategy = "rule"
 router_tier = "balanced"
 "#;
     let config: Config = toml::from_str(toml_config).expect("should parse TOML");
-    let selector = ModelSelector::new(Arc::new(config), test_metrics());
+    let selector = ModelSelector::new(Arc::new(config), test_metrics(), test_hash_cache());
 
     // Sample 6000 times (divisible by 6 for clean expected values)
     let no_exclude = ExclusionSet::new();
@@ -439,7 +447,7 @@ strategy = "rule"
 router_tier = "balanced"
 "#;
     let config: Config = toml::from_str(toml_config).expect("should parse TOML");
-    let selector = ModelSelector::new(Arc::new(config), test_metrics());
+    let selector = ModelSelector::new(Arc::new(config), test_metrics(), test_hash_cache());
 
     // Run 10,000 selections
     const SAMPLE_SIZE: usize = 10_000;

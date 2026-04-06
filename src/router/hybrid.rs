@@ -162,6 +162,15 @@ mod tests {
     fn mock_metrics() -> Arc<crate::metrics::Metrics> {
         Arc::new(crate::metrics::Metrics::new().unwrap())
     }
+
+    /// Helper to create a hash cache for tests
+    fn test_hash_cache() -> crate::handlers::HashCache {
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+        Arc::new(RwLock::new(HashMap::new()))
+    }
+
     use super::*;
     use crate::config::Config;
     use crate::models::selector::ModelSelector;
@@ -251,7 +260,11 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_router_creation() {
         let config = test_config();
-        let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
         let _router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed with balanced tier");
         // If we get here without panic, creation succeeded
@@ -260,7 +273,11 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_router_uses_rule_when_matched() {
         let config = test_config();
-        let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
 
@@ -282,7 +299,11 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_router_uses_rule_for_code() {
         let config = test_config();
-        let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
 
@@ -302,9 +323,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_hybrid_router_falls_back_to_llm_when_no_rule_match() {
+        // This test verifies the CRITICAL FIX: when no rule matches, hybrid router
+        // should call LLM router, NOT use default tier.
+        //
+        // FIX: Use MockLlmRouter to avoid network calls and panics during testing.
+
+        let config = test_config();
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
+
+        // Create mock LLM router that returns Balanced tier
+        let mock_llm_router = Arc::new(MockLlmRouter::new(TargetModel::Balanced));
+
+        // Create hybrid router with mock LLM router (no network calls)
+        let router = HybridRouter::new_with_llm_router(mock_llm_router, selector.clone());
+
+        // CasualChat + High importance has NO rule match (see rule_based.rs)
+        // This is the "ambiguous case" that should trigger LLM routing
+        let meta = RouteMetadata {
+            token_estimate: 100,
+            importance: Importance::High,
+            task_type: TaskType::CasualChat,
+        };
+
+        // Attempt routing
+        // Expected behavior:
+        // 1. Rule router returns None (no match)
+        // 2. Hybrid router sees None, calls mock LLM router
+        // 3. Mock LLM router returns Balanced tier (no network call)
+        let result = router.route("Am I allowed to do this?", &meta).await;
+
+        // Result should succeed (mock router doesn't make network calls)
+        assert!(
+            result.is_ok(),
+            "Should succeed with mock LLM router: {:?}",
+            result
+        );
+
+        let decision = result.unwrap();
+
+        // Verify LLM router was called (strategy should be Llm, not Rule)
+        assert_eq!(
+            decision.strategy(),
+            RoutingStrategy::Llm,
+            "Strategy should be Llm (proves LLM router was called)"
+        );
+
+        // Verify the mock router's decision was used
+        assert_eq!(
+            decision.target(),
+            TargetModel::Balanced,
+            "Target should be Balanced (from mock LLM router)"
+        );
+    }
+
+    #[tokio::test]
     async fn test_hybrid_router_uses_rule_for_high_importance() {
         let config = test_config();
-        let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
 
@@ -330,7 +414,11 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_router_has_both_routers() {
         let config = test_config();
-        let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
 
@@ -343,7 +431,11 @@ mod tests {
     #[tokio::test]
     async fn test_hybrid_router_both_rule_and_llm_fail() {
         let config = test_config();
-        let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
         let router = HybridRouter::new(config, selector.clone(), mock_metrics())
             .expect("HybridRouter::new should succeed");
 
@@ -410,7 +502,11 @@ mod tests {
         // FIX: Use MockLlmRouter to avoid network calls and panics during testing.
 
         let config = test_config();
-        let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
 
         // Create mock LLM router that returns Balanced tier
         let mock_llm_router = Arc::new(MockLlmRouter::new(TargetModel::Balanced));
@@ -461,7 +557,11 @@ mod tests {
     async fn test_hybrid_router_rule_match_skips_llm() {
         // Verify that when a rule DOES match, LLM is NOT called (fast path works)
         let config = test_config();
-        let selector = Arc::new(ModelSelector::new(config.clone(), mock_metrics()));
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
 
@@ -491,5 +591,40 @@ mod tests {
             RoutingStrategy::Rule,
             "Should use Rule strategy (not Llm)"
         );
+    }
+
+    #[tokio::test]
+    async fn test_hybrid_router_integration() {
+        let config = test_config();
+        let selector = Arc::new(ModelSelector::new(
+            config.clone(),
+            mock_metrics(),
+            test_hash_cache(),
+        ));
+        let router = HybridRouter::new(config, selector, mock_metrics())
+            .expect("HybridRouter::new should succeed");
+
+        // Test a few different scenarios to verify the router works end-to-end
+        let meta1 = RouteMetadata {
+            token_estimate: 200,
+            importance: Importance::Low,
+            task_type: TaskType::CasualChat,
+        };
+        let result1 = router.route("Hello!", &meta1).await;
+        assert!(result1.is_ok());
+
+        let meta2 = RouteMetadata {
+            token_estimate: 2000,
+            importance: Importance::High,
+            task_type: TaskType::DeepAnalysis,
+        };
+        let result2 = router
+            .route("Please analyze this complex topic", &meta2)
+            .await;
+        assert!(result2.is_ok());
+
+        let decision = result2.unwrap();
+        // High importance should trigger rule-based routing
+        assert_eq!(decision.strategy(), RoutingStrategy::Rule);
     }
 }

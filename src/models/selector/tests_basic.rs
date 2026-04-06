@@ -4,20 +4,29 @@
 //! empty tiers, and concurrency safety.
 
 use super::*;
+use crate::handlers::HashCache;
+use crate::models::endpoint_name::ExclusionSet;
+use crate::models::selector::ModelSelector;
+use crate::router::TargetModel;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Helper to create test metrics
 fn test_metrics() -> Arc<crate::metrics::Metrics> {
     Arc::new(crate::metrics::Metrics::new().expect("should create metrics"))
 }
-use crate::models::endpoint_name::ExclusionSet;
-use crate::models::selector::ModelSelector;
-use crate::router::TargetModel;
-use std::sync::Arc;
+
+/// Helper to create a hash cache for tests
+fn test_hash_cache() -> HashCache {
+    Arc::new(RwLock::new(HashMap::new()))
+}
 
 #[tokio::test]
 async fn test_selector_new_creates_selector() {
     let config = Arc::new(create_test_config());
-    let selector = ModelSelector::new(config, test_metrics());
+    let hash_cache = test_hash_cache();
+    let selector = ModelSelector::new(config, test_metrics(), hash_cache);
 
     // Verify we can create a selector
     assert_eq!(selector.endpoint_count(TargetModel::Fast), 2);
@@ -28,7 +37,8 @@ async fn test_selector_new_creates_selector() {
 #[tokio::test]
 async fn test_selector_select_returns_endpoint() {
     let config = Arc::new(create_test_config());
-    let selector = ModelSelector::new(config, test_metrics());
+    let hash_cache = test_hash_cache();
+    let selector = ModelSelector::new(config, test_metrics(), hash_cache);
 
     // Should return some endpoint for each tier (no exclusions)
     let no_exclude = ExclusionSet::new();
@@ -55,7 +65,8 @@ async fn test_selector_select_returns_endpoint() {
 #[tokio::test]
 async fn test_selector_single_endpoint_tier() {
     let config = Arc::new(create_test_config());
-    let selector = ModelSelector::new(config, test_metrics());
+    let hash_cache = test_hash_cache();
+    let selector = ModelSelector::new(config, test_metrics(), hash_cache);
 
     // Balanced tier has only one endpoint, should return same one
     let no_exclude = ExclusionSet::new();
@@ -75,7 +86,8 @@ async fn test_selector_single_endpoint_tier() {
 #[tokio::test]
 async fn test_selector_endpoint_count() {
     let config = Arc::new(create_test_config());
-    let selector = ModelSelector::new(config, test_metrics());
+    let hash_cache = test_hash_cache();
+    let selector = ModelSelector::new(config, test_metrics(), hash_cache);
 
     assert_eq!(selector.endpoint_count(TargetModel::Fast), 2);
     assert_eq!(selector.endpoint_count(TargetModel::Balanced), 1);
@@ -109,7 +121,7 @@ strategy = "rule"
 router_tier = "balanced"
 "#;
     let config: Config = toml::from_str(toml_config).expect("should parse TOML");
-    let selector = ModelSelector::new(Arc::new(config), test_metrics());
+    let selector = ModelSelector::new(Arc::new(config), test_metrics(), test_hash_cache());
 
     let no_exclude = ExclusionSet::new();
     let result = selector.select(TargetModel::Fast, &no_exclude).await;
@@ -119,7 +131,8 @@ router_tier = "balanced"
 #[tokio::test]
 async fn test_selector_concurrent_weighted_selection() {
     let config = Arc::new(create_test_config());
-    let selector = Arc::new(ModelSelector::new(config, test_metrics()));
+    let hash_cache = test_hash_cache();
+    let selector = Arc::new(ModelSelector::new(config, test_metrics(), hash_cache));
 
     // Spawn 10 concurrent tasks selecting from Fast tier (which has 2 endpoints)
     let mut handles = vec![];
