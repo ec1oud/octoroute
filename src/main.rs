@@ -128,6 +128,8 @@ async fn run_server(config_path: &str) -> Result<(), Box<dyn std::error::Error>>
     let app = Router::new()
         // Ollama-compatible endpoints
         .route("/api/chat", post(handlers::ollama::chat::handler))
+        .route("/api/generate", post(handlers::ollama::generate::handler))
+        .route("/api/show", post(handlers::ollama::show::handler))
         .route("/api/tags", get(handlers::ollama::tags::handler))
         // Legacy endpoints
         .route("/health", get(handlers::health::handler))
@@ -159,6 +161,9 @@ async fn run_server(config_path: &str) -> Result<(), Box<dyn std::error::Error>>
 
     tracing::info!("Listening on {}", addr);
     tracing::info!("Ollama-compatible endpoints:");
+    tracing::info!("  POST http://{}/api/chat", addr);
+    tracing::info!("  POST http://{}/api/generate", addr);
+    tracing::info!("  POST http://{}/api/show", addr);
     tracing::info!("  GET  http://{}/api/tags", addr);
     tracing::info!("Health check available at http://{}/health", addr);
     tracing::info!("Legacy chat endpoint at http://{}/chat", addr);
