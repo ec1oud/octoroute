@@ -10,7 +10,7 @@ fn mock_metrics() -> Arc<crate::metrics::Metrics> {
 }
 
 /// Helper to create a hash cache for tests
-fn test_hash_cache() -> crate::handlers::HashCache {
+fn test_model_cache() -> crate::models::cache::ModelCache {
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -65,7 +65,7 @@ router_tier = "balanced"
     let selector = Arc::new(ModelSelector::new(
         config.clone(),
         mock_metrics(),
-        test_hash_cache(),
+        test_model_cache(),
     ));
 
     // Verify selector has balanced endpoints
@@ -155,7 +155,7 @@ router_tier = "balanced"
     let selector = Arc::new(ModelSelector::new(
         config.clone(),
         mock_metrics(),
-        test_hash_cache(),
+        test_model_cache(),
     ));
 
     // This should succeed because there is a balanced tier endpoint

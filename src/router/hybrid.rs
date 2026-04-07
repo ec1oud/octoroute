@@ -164,7 +164,7 @@ mod tests {
     }
 
     /// Helper to create a hash cache for tests
-    fn test_hash_cache() -> crate::handlers::HashCache {
+    fn test_model_cache() -> crate::models::cache::ModelCache {
         use std::collections::HashMap;
         use std::sync::Arc;
         use tokio::sync::RwLock;
@@ -263,7 +263,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
         let _router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed with balanced tier");
@@ -276,7 +276,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
@@ -302,7 +302,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
@@ -333,7 +333,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
 
         // Create mock LLM router that returns Balanced tier
@@ -387,7 +387,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
@@ -417,7 +417,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
@@ -434,7 +434,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
         let router = HybridRouter::new(config, selector.clone(), mock_metrics())
             .expect("HybridRouter::new should succeed");
@@ -505,7 +505,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
 
         // Create mock LLM router that returns Balanced tier
@@ -560,7 +560,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");
@@ -599,7 +599,7 @@ mod tests {
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             mock_metrics(),
-            test_hash_cache(),
+            test_model_cache(),
         ));
         let router = HybridRouter::new(config, selector, mock_metrics())
             .expect("HybridRouter::new should succeed");

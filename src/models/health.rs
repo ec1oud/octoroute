@@ -354,7 +354,7 @@ pub struct HealthChecker {
     /// Background health checking task handle for graceful shutdown
     background_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// Cache for real model digests from Ollama endpoints
-    hash_cache: crate::handlers::HashCache,
+    model_cache: crate::models::cache::ModelCache,
 }
 
 impl std::fmt::Debug for HealthChecker {
@@ -372,14 +372,14 @@ impl std::fmt::Debug for HealthChecker {
                 },
             )
             .field("background_task", &"<Mutex<JoinHandle>>")
-            .field("hash_cache", &"<HashCache>")
+            .field("model_cache", &"<ModelCache>")
             .finish()
     }
 }
 
 impl HealthChecker {
     /// Create a new HealthChecker with all endpoints starting as healthy
-    pub fn new(config: Arc<Config>, hash_cache: crate::handlers::HashCache) -> Self {
+    pub fn new(config: Arc<Config>, model_cache: crate::models::cache::ModelCache) -> Self {
         let mut health_status = HashMap::new();
 
         // Initialize all fast endpoints
@@ -417,7 +417,7 @@ impl HealthChecker {
             metrics: Arc::new(HealthMetrics::new()),
             app_metrics: None,
             background_task: Arc::new(Mutex::new(None)),
-            hash_cache,
+            model_cache,
         }
     }
 
@@ -431,20 +431,20 @@ impl HealthChecker {
     /// # Arguments
     /// * `config` - Application configuration with model endpoints
     /// * `app_metrics` - Prometheus metrics collector for surfacing failures
-    /// * `hash_cache` - Cache for real model digests from Ollama endpoints
+    /// * `model_cache` - Cache for real model digests from Ollama endpoints
     ///
     /// # Example
     /// ```ignore
     /// let config = Arc::new(Config::load()?);
     /// let metrics = Arc::new(Metrics::new()?);
-    /// let hash_cache = Arc::new(RwLock::new(HashMap::new()));
-    /// let checker = Arc::new(HealthChecker::new_with_metrics(config, metrics, hash_cache));
+    /// let model_cache = Arc::new(RwLock::new(HashMap::new()));
+    /// let checker = Arc::new(HealthChecker::new_with_metrics(config, metrics, model_cache));
     /// checker.start_background_checks();
     /// ```
     pub fn new_with_metrics(
         config: Arc<Config>,
         app_metrics: Arc<crate::metrics::Metrics>,
-        hash_cache: crate::handlers::HashCache,
+        model_cache: crate::models::cache::ModelCache,
     ) -> Self {
         let mut health_status = HashMap::new();
 
@@ -484,7 +484,7 @@ impl HealthChecker {
             metrics: Arc::new(HealthMetrics::new()),
             app_metrics: Some(app_metrics),
             background_task: Arc::new(Mutex::new(None)),
-            hash_cache,
+            model_cache,
         }
     }
 
@@ -794,7 +794,7 @@ impl HealthChecker {
     /// ```
     async fn cache_ollama_hashes(&self, response: &serde_json::Value) {
         if let Some(models) = response.get("models").and_then(|m| m.as_array()) {
-            let mut cache = self.hash_cache.write().await;
+            let mut cache = self.model_cache.write().await;
             for model in models {
                 // Extract all fields from the Ollama tags response
                 if let (Some(name), Some(digest)) = (
@@ -1230,7 +1230,7 @@ router_tier = "balanced"
     }
 
     /// Helper to create a hash cache for tests
-    fn test_hash_cache() -> crate::handlers::HashCache {
+    fn test_model_cache() -> crate::models::cache::ModelCache {
         use std::collections::HashMap;
         use std::sync::Arc;
         use tokio::sync::RwLock;
@@ -1240,8 +1240,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_new_initializes_all_healthy() {
         let config = Arc::new(create_test_config());
-        let hash_cache = test_hash_cache();
-        let checker = HealthChecker::new(config, hash_cache);
+        let model_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, model_cache);
 
         // All endpoints should start as healthy
         assert!(checker.is_healthy("fast-1").await);
@@ -1253,8 +1253,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_unknown_endpoint_is_unhealthy() {
         let config = Arc::new(create_test_config());
-        let hash_cache = test_hash_cache();
-        let checker = HealthChecker::new(config, hash_cache);
+        let model_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, model_cache);
 
         // Unknown endpoint should be considered unhealthy
         assert!(!checker.is_healthy("unknown-endpoint").await);
@@ -1263,8 +1263,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_mark_failure_tracks_consecutive() {
         let config = Arc::new(create_test_config());
-        let hash_cache = test_hash_cache();
-        let checker = HealthChecker::new(config, hash_cache);
+        let model_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, model_cache);
 
         // Should still be healthy after 1-2 failures
         checker.mark_failure("fast-1").await.unwrap();
@@ -1281,8 +1281,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_mark_success_recovers() {
         let config = Arc::new(create_test_config());
-        let hash_cache = test_hash_cache();
-        let checker = HealthChecker::new(config, hash_cache);
+        let model_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, model_cache);
 
         // Mark unhealthy with 3 failures
         checker.mark_failure("fast-1").await.unwrap();
@@ -1303,8 +1303,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_get_all_statuses_returns_all_endpoints() {
         let config = Arc::new(create_test_config());
-        let hash_cache = test_hash_cache();
-        let checker = HealthChecker::new(config, hash_cache);
+        let model_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, model_cache);
 
         let statuses = checker.get_all_statuses().await;
 
@@ -1322,8 +1322,8 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_success_resets_partial_failures() {
         let config = Arc::new(create_test_config());
-        let hash_cache = test_hash_cache();
-        let checker = HealthChecker::new(config, hash_cache);
+        let model_cache = test_hash_cache();
+        let checker = HealthChecker::new(config, model_cache);
 
         // 2 failures (not enough to mark unhealthy)
         checker.mark_failure("fast-1").await.unwrap();

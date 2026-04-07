@@ -44,14 +44,14 @@ impl ModelSelector {
     /// # Arguments
     /// * `config` - Application configuration
     /// * `metrics` - Prometheus metrics for surfacing health tracking failures
-    /// * `hash_cache` - Cache for real model digests from Ollama endpoints
+    /// * `model_cache` - Cache for real model digests from Ollama endpoints
     pub fn new(
         config: Arc<Config>,
         metrics: Arc<crate::metrics::Metrics>,
-        hash_cache: crate::handlers::HashCache,
+        model_cache: crate::models::cache::ModelCache,
     ) -> Self {
         let health_checker =
-            Arc::new(HealthChecker::new_with_metrics(config.clone(), metrics, hash_cache));
+            Arc::new(HealthChecker::new_with_metrics(config.clone(), metrics, model_cache));
 
         // Start background health checking
         health_checker.clone().start_background_checks();

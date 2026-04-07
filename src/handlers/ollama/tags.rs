@@ -65,7 +65,7 @@ pub struct TagsModelDetails {
 /// - All configured endpoint names from the config file
 pub async fn handler(State(state): State<AppState>) -> impl IntoResponse {
     // Get the model cache to look up full model info
-    let model_cache = state.hash_cache();
+    let model_cache = state.model_cache();
     let model_cache_guard = model_cache.read().await;
 
     let models = {

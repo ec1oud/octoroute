@@ -10,9 +10,6 @@ use tokio::sync::RwLock;
 
 type MetricsHandle = Arc<crate::metrics::Metrics>;
 
-// HashCache is now defined in crate::models::cache::ModelCache
-pub type HashCache = ModelCache;
-
 pub mod chat;
 pub mod health;
 pub mod metrics;
@@ -45,7 +42,7 @@ pub struct AppState {
     metrics: Arc<crate::metrics::Metrics>,
     /// Cache of model information from Ollama endpoints
     /// Stores full ModelInfo structs including digests, sizes, and details
-    hash_cache: HashCache,
+    model_cache: ModelCache,
 }
 
 impl AppState {
@@ -68,13 +65,13 @@ impl AppState {
         };
 
         // Create the hash cache for storing model information from Ollama endpoints
-        let hash_cache: ModelCache = Arc::new(RwLock::new(HashMap::new()));
+        let model_cache: ModelCache = Arc::new(RwLock::new(HashMap::new()));
 
         // Create selector with metrics integration for health tracking
         let selector = Arc::new(ModelSelector::new(
             config.clone(),
             metrics.clone(),
-            hash_cache.clone(),
+            model_cache.clone(),
         ));
 
         // Construct router based on config.routing.strategy
@@ -129,7 +126,7 @@ impl AppState {
             selector,
             router,
             metrics,
-            hash_cache: Arc::new(RwLock::new(HashMap::new())),
+            model_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -165,8 +162,8 @@ impl AppState {
     /// The hash cache stores full model information from Ollama endpoints,
     /// including digests, sizes, and details. Populated during health checks
     /// and used by /api/tags to return accurate model metadata.
-    pub fn hash_cache(&self) -> HashCache {
-        Arc::clone(&self.hash_cache)
+    pub fn model_cache(&self) -> ModelCache {
+        Arc::clone(&self.model_cache)
     }
 }
 

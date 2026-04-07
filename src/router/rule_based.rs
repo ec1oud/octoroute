@@ -121,7 +121,7 @@ mod tests {
     }
 
     /// Helper to create a hash cache for tests
-    fn test_hash_cache() -> crate::handlers::HashCache {
+    fn test_model_cache() -> crate::models::cache::ModelCache {
         use std::collections::HashMap;
         use std::sync::Arc;
         use tokio::sync::RwLock;
@@ -177,7 +177,7 @@ log_level = "info"
     async fn test_router_creates() {
         let router = RuleBasedRouter::new();
         let config = test_config();
-        let selector = ModelSelector::new(config, test_metrics(), test_hash_cache());
+        let selector = ModelSelector::new(config, test_metrics(), test_model_cache());
 
         // Request with no rule match should return None (not default tier)
         let result = router
@@ -470,7 +470,7 @@ log_level = "info"
         // RED: This test will fail until we update the signature
         let router = RuleBasedRouter::new();
         let config = test_config();
-        let selector = ModelSelector::new(config, test_metrics(), test_hash_cache());
+        let selector = ModelSelector::new(config, test_metrics(), test_model_cache());
 
         // CasualChat + High importance has no rule match (see line 103)
         let meta = RouteMetadata::new(100)
@@ -495,7 +495,7 @@ log_level = "info"
         // Verify that rule matches still return Some(decision)
         let router = RuleBasedRouter::new();
         let config = test_config();
-        let selector = ModelSelector::new(config, test_metrics(), test_hash_cache());
+        let selector = ModelSelector::new(config, test_metrics(), test_model_cache());
 
         // CasualChat + Normal + <256 tokens matches Rule 1 → Fast
         let meta = RouteMetadata::new(100)
