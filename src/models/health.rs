@@ -443,7 +443,6 @@ impl HealthChecker {
 
         for endpoint in endpoints {
             if endpoint.api_type() == "ollama" {
-                let base_url = endpoint.base_url();
                 let url = endpoint.health_check_url();
                 tracing::debug!(
                     endpoint_name = %endpoint.name(),
@@ -933,7 +932,7 @@ impl HealthChecker {
                     };
 
                     // Cache by actual model name so all discovered models appear in /api/tags
-                    cache.insert(name.to_string(), model_info.clone());
+                    let inserted = cache.insert(name.to_string(), model_info.clone()).is_none();
 
                     // Also cache by endpoint name for configured endpoint mappings
                     // This allows the /api/tags handler to look up by configured endpoint name
@@ -947,20 +946,16 @@ impl HealthChecker {
                     };
                     cache.insert(endpoint_name.to_string(), endpoint_mapping);
 
-                    tracing::info!(
-                        endpoint_name = %endpoint_name,
-                        model_name = %name,
-                        digest = %digest,
-                        "Cached full model info from Ollama endpoint (cached by name: {} and endpoint: {})",
-                        name,
-                        endpoint_name
-                    );
-                    tracing::debug!(
-                        endpoint_name = %endpoint_name,
-                        model_name = %name,
-                        digest = %digest,
-                        "Cached full model info from Ollama endpoint"
-                    );
+                    if inserted {
+                        tracing::info!(
+                            endpoint_name = %endpoint_name,
+                            model_name = %name,
+                            digest = %digest,
+                            "Cached full model info from Ollama endpoint (cached by name: {} and endpoint: {})",
+                            name,
+                            endpoint_name
+                        );
+                    }
                 }
             }
         }
