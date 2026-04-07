@@ -25,7 +25,7 @@ fn test_model_cache() -> ModelCache {
 #[tokio::test]
 async fn test_selector_new_creates_selector() {
     let config = Arc::new(create_test_config());
-    let model_cache = test_hash_cache();
+    let model_cache = test_model_cache();
     let selector = ModelSelector::new(config, test_metrics(), model_cache);
 
     // Verify we can create a selector
@@ -37,7 +37,7 @@ async fn test_selector_new_creates_selector() {
 #[tokio::test]
 async fn test_selector_select_returns_endpoint() {
     let config = Arc::new(create_test_config());
-    let model_cache = test_hash_cache();
+    let model_cache = test_model_cache();
     let selector = ModelSelector::new(config, test_metrics(), model_cache);
 
     // Should return some endpoint for each tier (no exclusions)
@@ -65,7 +65,7 @@ async fn test_selector_select_returns_endpoint() {
 #[tokio::test]
 async fn test_selector_single_endpoint_tier() {
     let config = Arc::new(create_test_config());
-    let model_cache = test_hash_cache();
+    let model_cache = test_model_cache();
     let selector = ModelSelector::new(config, test_metrics(), model_cache);
 
     // Balanced tier has only one endpoint, should return same one
@@ -86,7 +86,7 @@ async fn test_selector_single_endpoint_tier() {
 #[tokio::test]
 async fn test_selector_endpoint_count() {
     let config = Arc::new(create_test_config());
-    let model_cache = test_hash_cache();
+    let model_cache = test_model_cache();
     let selector = ModelSelector::new(config, test_metrics(), model_cache);
 
     assert_eq!(selector.endpoint_count(TargetModel::Fast), 2);
@@ -131,7 +131,7 @@ router_tier = "balanced"
 #[tokio::test]
 async fn test_selector_concurrent_weighted_selection() {
     let config = Arc::new(create_test_config());
-    let model_cache = test_hash_cache();
+    let model_cache = test_model_cache();
     let selector = Arc::new(ModelSelector::new(config, test_metrics(), model_cache));
 
     // Spawn 10 concurrent tasks selecting from Fast tier (which has 2 endpoints)

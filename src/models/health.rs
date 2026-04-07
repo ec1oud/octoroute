@@ -421,6 +421,74 @@ impl HealthChecker {
         }
     }
 
+    /// Immediately populate the cache with model data from all Ollama endpoints.
+    /// This should be called during server startup to ensure /api/tags returns
+    /// accurate model information from the first request.
+    pub async fn warmup_cache(&self) {
+        tracing::info!("Running initial cache warmup for all Ollama endpoints");
+
+        let endpoints: Vec<&ModelEndpoint> = {
+            let mut eps = Vec::new();
+            for endpoint in &self.config.models.fast {
+                eps.push(endpoint);
+            }
+            for endpoint in &self.config.models.balanced {
+                eps.push(endpoint);
+            }
+            for endpoint in &self.config.models.deep {
+                eps.push(endpoint);
+            }
+            eps
+        };
+
+        for endpoint in endpoints {
+            if endpoint.api_type() == "ollama" {
+                let base_url = endpoint.base_url();
+                let url = endpoint.health_check_url();
+                tracing::debug!(
+                    endpoint_name = %endpoint.name(),
+                    url = %url,
+                    "Warming up cache for Ollama endpoint"
+                );
+
+                // Use a short timeout for cache warmup
+                match reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(5))
+                    .build()
+                {
+                    Ok(client) => match client.get(&url).send().await {
+                        Ok(response) => {
+                            if response.status().is_success() {
+                                if let Ok(body) = response.json::<serde_json::Value>().await {
+                                    self.cache_ollama_hashes(&body, endpoint.name()).await;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                endpoint_name = %endpoint.name(),
+                                error = %e,
+                                "Cache warmup failed for Ollama endpoint"
+                            );
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!(
+                            endpoint_name = %endpoint.name(),
+                            error = %e,
+                            "Failed to create HTTP client for cache warmup"
+                        );
+                    }
+                }
+            }
+        }
+
+        tracing::info!(
+            cached_models = self.model_cache.read().await.len(),
+            "Cache warmup complete"
+        );
+    }
+
     /// Create a new HealthChecker with Prometheus metrics integration
     ///
     /// This constructor enables surfacing of health tracking failures to operators
@@ -727,9 +795,9 @@ impl HealthChecker {
                     let status = response.status();
                     let is_success = status.is_success();
                     if is_success {
-                        // Try to parse the response and cache real digests
+                        // Try to parse the response and cache real digests by endpoint name
                         if let Ok(body) = response.json::<serde_json::Value>().await {
-                            self.cache_ollama_hashes(&body).await;
+                            self.cache_ollama_hashes(&body, endpoint.name()).await;
                         }
                     }
                     tracing::debug!(
@@ -778,7 +846,7 @@ impl HealthChecker {
         }
     }
 
-    /// Parse Ollama /api/tags response and cache model digests
+    /// Parse Oollama /api/tags response and cache model digests
     ///
     /// The response format is:
     /// ```json
@@ -789,10 +857,10 @@ impl HealthChecker {
     ///       "digest": "sha256:abc123...",
     ///       ...
     ///     }
-    ///   ]
+    ///   }
     /// }
     /// ```
-    async fn cache_ollama_hashes(&self, response: &serde_json::Value) {
+    async fn cache_ollama_hashes(&self, response: &serde_json::Value, endpoint_name: &str) {
         if let Some(models) = response.get("models").and_then(|m| m.as_array()) {
             let mut cache = self.model_cache.write().await;
             for model in models {
@@ -802,7 +870,7 @@ impl HealthChecker {
                     model.get("digest").and_then(|d| d.as_str()),
                 ) {
                     // Extract optional details object
-                    let details =
+                    let model_details =
                         model
                             .get("details")
                             .and_then(|d| d.as_object())
@@ -854,18 +922,41 @@ impl HealthChecker {
                         .unwrap_or("1970-01-01T00:00:00Z")
                         .to_string();
 
-                    // Insert full model info into cache
+                    // Create model info with the actual Ollama model name as both name and model
                     let model_info = ModelInfo {
                         name: name.to_string(),
                         model: name.to_string(),
-                        modified_at,
+                        modified_at: modified_at.clone(),
                         digest: format!("sha256:{}", digest.trim_start_matches("sha256:")),
                         size,
-                        details,
+                        details: model_details,
                     };
 
-                    cache.insert(name.to_string(), model_info);
+                    // Cache by actual model name so all discovered models appear in /api/tags
+                    cache.insert(name.to_string(), model_info.clone());
+
+                    // Also cache by endpoint name for configured endpoint mappings
+                    // This allows the /api/tags handler to look up by configured endpoint name
+                    let endpoint_mapping = ModelInfo {
+                        name: endpoint_name.to_string(),
+                        model: name.to_string(),
+                        modified_at: modified_at,
+                        digest: format!("sha256:{}", digest.trim_start_matches("sha256:")),
+                        size,
+                        details: model_info.details.clone(),
+                    };
+                    cache.insert(endpoint_name.to_string(), endpoint_mapping);
+
+                    tracing::info!(
+                        endpoint_name = %endpoint_name,
+                        model_name = %name,
+                        digest = %digest,
+                        "Cached full model info from Ollama endpoint (cached by name: {} and endpoint: {})",
+                        name,
+                        endpoint_name
+                    );
                     tracing::debug!(
+                        endpoint_name = %endpoint_name,
                         model_name = %name,
                         digest = %digest,
                         "Cached full model info from Ollama endpoint"
@@ -1240,7 +1331,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_new_initializes_all_healthy() {
         let config = Arc::new(create_test_config());
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let checker = HealthChecker::new(config, model_cache);
 
         // All endpoints should start as healthy
@@ -1253,7 +1344,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_unknown_endpoint_is_unhealthy() {
         let config = Arc::new(create_test_config());
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let checker = HealthChecker::new(config, model_cache);
 
         // Unknown endpoint should be considered unhealthy
@@ -1263,7 +1354,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_mark_failure_tracks_consecutive() {
         let config = Arc::new(create_test_config());
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let checker = HealthChecker::new(config, model_cache);
 
         // Should still be healthy after 1-2 failures
@@ -1281,7 +1372,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_mark_success_recovers() {
         let config = Arc::new(create_test_config());
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let checker = HealthChecker::new(config, model_cache);
 
         // Mark unhealthy with 3 failures
@@ -1303,7 +1394,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_get_all_statuses_returns_all_endpoints() {
         let config = Arc::new(create_test_config());
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let checker = HealthChecker::new(config, model_cache);
 
         let statuses = checker.get_all_statuses().await;
@@ -1322,7 +1413,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_health_checker_success_resets_partial_failures() {
         let config = Arc::new(create_test_config());
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let checker = HealthChecker::new(config, model_cache);
 
         // 2 failures (not enough to mark unhealthy)

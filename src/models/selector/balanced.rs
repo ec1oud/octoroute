@@ -193,7 +193,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_tier_selector_new_with_balanced_endpoints() {
         let config = create_test_config_with_balanced();
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let selector = Arc::new(ModelSelector::new(config, test_metrics(), model_cache));
 
         let result = TierSelector::new(selector, TargetModel::Balanced);
@@ -206,7 +206,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_tier_selector_new_without_balanced_endpoints() {
         let config = create_test_config_without_balanced();
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let selector = Arc::new(ModelSelector::new(config, test_metrics(), model_cache));
 
         let result = TierSelector::new(selector, TargetModel::Balanced);
@@ -228,7 +228,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_tier_selector_selects_balanced_endpoint() {
         let config = create_test_config_with_balanced();
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let selector = Arc::new(ModelSelector::new(config, test_metrics(), model_cache));
         let tier_selector =
             TierSelector::new(selector, TargetModel::Balanced).expect("should create TierSelector");
@@ -248,7 +248,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_tier_selector_respects_exclusion() {
         let config = create_test_config_with_balanced();
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let selector = Arc::new(ModelSelector::new(config, test_metrics(), model_cache));
         let tier_selector =
             TierSelector::new(selector, TargetModel::Balanced).expect("should create TierSelector");
@@ -274,7 +274,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_tier_selector_endpoint_count() {
         let config = create_test_config_with_balanced();
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let selector = Arc::new(ModelSelector::new(config, test_metrics(), model_cache));
         let tier_selector =
             TierSelector::new(selector, TargetModel::Balanced).expect("should create TierSelector");
@@ -289,7 +289,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_tier_selector_with_fast_tier() {
         let config = create_test_config_with_balanced();
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let selector = Arc::new(ModelSelector::new(config, test_metrics(), model_cache));
 
         let tier_selector = TierSelector::new(selector, TargetModel::Fast)
@@ -311,7 +311,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_tier_selector_with_deep_tier() {
         let config = create_test_config_with_balanced();
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let selector = Arc::new(ModelSelector::new(config, test_metrics(), model_cache));
 
         let tier_selector = TierSelector::new(selector, TargetModel::Deep)
@@ -333,7 +333,7 @@ router_tier = "balanced"
     #[tokio::test]
     async fn test_tier_selector_fails_with_no_endpoints_for_tier() {
         let config = create_test_config_without_balanced();
-        let model_cache = test_hash_cache();
+        let model_cache = test_model_cache();
         let selector = Arc::new(ModelSelector::new(config, test_metrics(), model_cache));
 
         // Should fail for Balanced tier (no endpoints)

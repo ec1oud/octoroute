@@ -121,6 +121,11 @@ async fn run_server(config_path: &str) -> Result<(), Box<dyn std::error::Error>>
     // Create application state (fails if router construction fails)
     let state = AppState::new(config.clone())?;
 
+    // Warmup the model cache immediately to ensure /api/tags returns accurate data
+    // from the first request, without waiting for the 30s health check interval
+    tracing::info!("Running initial model cache warmup...");
+    state.health_checker().warmup_cache().await;
+
     // Clone state for shutdown handler (state is moved to router)
     let shutdown_state = state.clone();
 

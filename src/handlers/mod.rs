@@ -46,6 +46,14 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Get a reference to the health checker for external operations
+    /// (e.g., cache warmup, health monitoring)
+    pub fn health_checker(&self) -> &std::sync::Arc<crate::models::HealthChecker> {
+        self.selector.health_checker()
+    }
+}
+
+impl AppState {
     /// Create a new AppState from configuration
     ///
     /// Accepts `Arc<Config>` to avoid unnecessary cloning when the configuration
@@ -126,7 +134,7 @@ impl AppState {
             selector,
             router,
             metrics,
-            model_cache: Arc::new(RwLock::new(HashMap::new())),
+            model_cache,
         })
     }
 
