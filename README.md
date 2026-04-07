@@ -101,6 +101,7 @@ port = 3000
 [[models.fast]]
 name = "qwen3-8b-instruct"
 base_url = "http://localhost:11434/v1"  # Ollama
+api_type = "ollama"
 max_tokens = 4096
 temperature = 0.7
 weight = 1.0
@@ -252,12 +253,27 @@ for chunk in stream:
 |----------|--------|-------------|
 | `/v1/chat/completions` | POST | Chat completions (streaming & non-streaming) |
 | `/v1/models` | GET | List available models and tiers |
-| `/api/tags` | GET | Ollama-compatible model listing |
 
 See [API Reference](docs/api-reference.md) for complete documentation.
 
----
+**Ollama-Compatible API (WIP)**
 
+**Drop-in replacement for Ollama clients.** Use Octoroute with any
+Ollama-compatible SDK, framework, or tool - no code changes required.
+
+This feature is incomplete; but at least https://github.com/jondot/picocode/
+seems to work with this.
+
+### Available Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/tags` | GET | Ollama-compatible model listing |
+| `/api/show` | POST | get model information|
+| `/api/chat` | POST | chat |
+| `/api/generate` | POST | non-chat text completion|
+
+- - -
 ## How It Works
 
 ### Routing Strategies
