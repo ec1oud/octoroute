@@ -6,60 +6,37 @@
 //! expect to discover available models via this endpoint.
 
 use crate::handlers::AppState;
+use crate::models::cache::ModelInfo;
 use axum::{Json, extract::State, response::IntoResponse};
 
 /// Ollama-compatible tags response
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TagsListResponse {
-    pub models: Vec<ApiTagModel>,
+    pub models: Vec<TagsModel>,
 }
 
-/// A model object in Ollama tags format
+/// A model in the /api/tags response format
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct ApiTagModel {
+pub struct TagsModel {
     pub name: String,
-    pub digest: String,
+    #[serde(rename = "model")]
+    pub model: String,
+    pub modified_at: String,
     pub size: u64,
+    pub digest: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<TagsModelDetails>,
+}
+
+/// Details object in the /api/tags response
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TagsModelDetails {
+    pub parent_model: String,
     pub format: String,
-    pub family: Option<String>,
-    pub families: Option<Vec<String>>,
+    pub family: String,
+    pub families: Vec<String>,
     pub parameter_size: String,
     pub quantization_level: String,
-}
-
-impl ApiTagModel {
-    /// Create a new API tag model with optional cached digest
-    pub fn new(name: impl Into<String>, cached_digest: Option<&str>) -> Self {
-        let name = name.into();
-        // Use cached real digest if available, otherwise generate a fake one
-        let digest = cached_digest
-            .map(|d| d.to_string())
-            .unwrap_or_else(|| format!("sha256:{}", hex_digest(&name)));
-
-        Self {
-            name,
-            digest,
-            size: 0,                    // Not available for Octoroute configured models
-            format: "gguf".to_string(), // Default format
-            family: None,               // Not tracked
-            families: None,             // Not tracked
-            parameter_size: "unknown".to_string(), // Not tracked
-            quantization_level: "unknown".to_string(), // Not tracked
-        }
-    }
-}
-
-/// Generate a fake deterministic digest for a model name
-/// This is used as a fallback when no real digest is cached
-fn hex_digest(s: &str) -> String {
-    // Use a simple hash for deterministic but unique-looking digests
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut hasher = DefaultHasher::new();
-    s.hash(&mut hasher);
-    let hash = hasher.finish();
-    format!("{:016x}", hash)
 }
 
 /// GET /api/tags handler
@@ -71,58 +48,93 @@ fn hex_digest(s: &str) -> String {
 /// Returns an object with:
 /// - `models`: Array of model objects, each containing:
 ///   - `name`: Model name
-///   - `digest`: Fake SHA256 digest (for compatibility)
-///   - `size`: Size in bytes (reported as 0 for Octoroute models)
-///   - `format`: Model format (default: "gguf")
-///   - `family`: Model family (not tracked, omitted)
-///   - `families`: Model families (not tracked, omitted)
-///   - `parameter_size`: Parameter size (reported as "unknown")
-///   - `quantization_level`: Quantization level (reported as "unknown")
+///   - `model`: Duplicate of name (Ollama API requirement)
+///   - `modified_at`: Last modification timestamp
+///   - `digest`: SHA256 digest
+///   - `size`: Size in bytes (0 for Octoroute virtual models)
+///   - `details`: Object with model metadata (present for local models)
+///     - `parent_model`: Parent model name
+///     - `format`: Model format (e.g., "gguf")
+///     - `family`: Model family name
+///     - `families`: List of family names
+///     - `parameter_size`: Parameter count (e.g., "31.6B")
+///     - `quantization_level`: Quantization (e.g., "Q4_K_M")
 ///
 /// The response includes:
 /// - Tier-based virtual models: `auto`, `fast`, `balanced`, `deep`
 /// - All configured endpoint names from the config file
 pub async fn handler(State(state): State<AppState>) -> impl IntoResponse {
-    // Get the hash cache to look up real digests
-    let hash_cache = state.hash_cache();
-    let hash_cache_guard = hash_cache.read().await;
+    // Get the model cache to look up full model info
+    let model_cache = state.hash_cache();
+    let model_cache_guard = model_cache.read().await;
 
     let models = {
         // Scope block to ensure the guard lives for the entire model population
         let mut models = Vec::new();
 
-        // Get cached digest helper - closure captures hash_cache_guard
-        let get_digest = |name: &str| hash_cache_guard.get(name).map(|s| s.as_str());
-
-        // Add tier-based virtual models
+        // Add tier-based virtual models (no cached info, use placeholder)
         for tier in ["auto", "fast", "balanced", "deep"] {
-            models.push(ApiTagModel::new(tier, get_digest(tier)));
+            models.push(TagsModel {
+                name: tier.to_string(),
+                model: tier.to_string(),
+                modified_at: "2026-01-01T00:00:00Z".to_string(),
+                size: 0,
+                digest: format!("sha256:{:016x}", hash_string(tier)),
+                details: None,
+            });
         }
+
+        // Helper to convert cached ModelInfo to TagsModel
+        let model_to_tags = |info: &ModelInfo| -> TagsModel {
+            TagsModel {
+                name: info.name.clone(),
+                model: info.model.clone(),
+                modified_at: info.modified_at.clone(),
+                size: info.size,
+                digest: info.digest.clone(),
+                details: info.details.as_ref().map(|d| TagsModelDetails {
+                    parent_model: d.parent_model.clone(),
+                    format: d.format.clone(),
+                    family: d.family.clone(),
+                    families: d.families.clone(),
+                    parameter_size: d.parameter_size.clone(),
+                    quantization_level: d.quantization_level.clone(),
+                }),
+            }
+        };
 
         // Add configured endpoint names from each tier
         for endpoint in &state.config().models.fast {
-            models.push(ApiTagModel::new(
-                endpoint.name(),
-                get_digest(endpoint.name()),
-            ));
+            if let Some(info) = model_cache_guard.get(endpoint.name()) {
+                models.push(model_to_tags(info));
+            }
         }
         for endpoint in &state.config().models.balanced {
-            models.push(ApiTagModel::new(
-                endpoint.name(),
-                get_digest(endpoint.name()),
-            ));
+            if let Some(info) = model_cache_guard.get(endpoint.name()) {
+                models.push(model_to_tags(info));
+            }
         }
         for endpoint in &state.config().models.deep {
-            models.push(ApiTagModel::new(
-                endpoint.name(),
-                get_digest(endpoint.name()),
-            ));
+            if let Some(info) = model_cache_guard.get(endpoint.name()) {
+                models.push(model_to_tags(info));
+            }
         }
 
         models
     };
 
     Json(TagsListResponse { models })
+}
+
+/// Generate a deterministic hash string for a model name
+/// Used for virtual models that don't have real digests
+fn hash_string(s: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = DefaultHasher::new();
+    s.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(test)]

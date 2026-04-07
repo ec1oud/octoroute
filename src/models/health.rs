@@ -4,6 +4,7 @@
 //! Endpoints that fail consecutive checks are marked unhealthy and excluded from selection.
 
 use crate::config::{Config, ModelEndpoint};
+use crate::models::cache::{ModelDetails, ModelInfo};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -795,15 +796,79 @@ impl HealthChecker {
         if let Some(models) = response.get("models").and_then(|m| m.as_array()) {
             let mut cache = self.hash_cache.write().await;
             for model in models {
+                // Extract all fields from the Ollama tags response
                 if let (Some(name), Some(digest)) = (
                     model.get("name").and_then(|n| n.as_str()),
                     model.get("digest").and_then(|d| d.as_str()),
                 ) {
-                    cache.insert(name.to_string(), digest.to_string());
+                    // Extract optional details object
+                    let details =
+                        model
+                            .get("details")
+                            .and_then(|d| d.as_object())
+                            .map(|d| ModelDetails {
+                                parent_model: d
+                                    .get("parent_model")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                format: d
+                                    .get("format")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("gguf")
+                                    .to_string(),
+                                family: d
+                                    .get("family")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                families: d
+                                    .get("families")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str())
+                                            .map(|s| s.to_string())
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                                parameter_size: d
+                                    .get("parameter_size")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
+                                    .to_string(),
+                                quantization_level: d
+                                    .get("quantization_level")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
+                                    .to_string(),
+                            });
+
+                    // Extract size
+                    let size = model.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+
+                    // Extract modified_at timestamp
+                    let modified_at = model
+                        .get("modified_at")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("1970-01-01T00:00:00Z")
+                        .to_string();
+
+                    // Insert full model info into cache
+                    let model_info = ModelInfo {
+                        name: name.to_string(),
+                        model: name.to_string(),
+                        modified_at,
+                        digest: format!("sha256:{}", digest.trim_start_matches("sha256:")),
+                        size,
+                        details,
+                    };
+
+                    cache.insert(name.to_string(), model_info);
                     tracing::debug!(
                         model_name = %name,
                         digest = %digest,
-                        "Cached real digest from Ollama endpoint"
+                        "Cached full model info from Ollama endpoint"
                     );
                 }
             }
