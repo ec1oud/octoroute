@@ -28,6 +28,52 @@ pub struct ModelInfo {
     pub digest: String,
     pub size: u64,
     pub details: Option<ModelDetails>,
+    /// True if this model was discovered from a healthy endpoint
+    /// Skipped in serialization since this is internal tracking only
+    #[serde(skip_serializing)]
+    pub healthy: bool,
+}
+
+/// Creates a new healthy ModelInfo
+///
+/// Use this factory function when caching models from healthy endpoints.
+pub fn new_model_info(
+    name: String,
+    model: String,
+    modified_at: String,
+    digest: String,
+    size: u64,
+    details: Option<ModelDetails>,
+) -> ModelInfo {
+    ModelInfo {
+        name,
+        model,
+        modified_at,
+        digest,
+        size,
+        details,
+        healthy: true,
+    }
+}
+
+/// Creates a ModelInfo marked as unhealthy (from unhealthy endpoint)
+pub fn new_unhealthy_model_info(
+    name: String,
+    model: String,
+    modified_at: String,
+    digest: String,
+    size: u64,
+    details: Option<ModelDetails>,
+) -> ModelInfo {
+    ModelInfo {
+        name,
+        model,
+        modified_at,
+        digest,
+        size,
+        details,
+        healthy: false,
+    }
 }
 
 /// Cache for storing model information from Ollama endpoints
@@ -36,3 +82,14 @@ pub struct ModelInfo {
 /// Ollama endpoints for /api/tags. The tags handler uses this
 /// cache to return accurate model information to clients.
 pub type ModelCache = Arc<RwLock<HashMap<String, ModelInfo>>>;
+
+/// Extension trait for ModelInfo to filter healthy models
+pub trait ModelInfoExt {
+    fn is_healthy(&self) -> bool;
+}
+
+impl ModelInfoExt for ModelInfo {
+    fn is_healthy(&self) -> bool {
+        self.healthy
+    }
+}

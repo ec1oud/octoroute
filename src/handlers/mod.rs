@@ -46,14 +46,6 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Get a reference to the health checker for external operations
-    /// (e.g., cache warmup, health monitoring)
-    pub fn health_checker(&self) -> &std::sync::Arc<crate::models::HealthChecker> {
-        self.selector.health_checker()
-    }
-}
-
-impl AppState {
     /// Create a new AppState from configuration
     ///
     /// Accepts `Arc<Config>` to avoid unnecessary cloning when the configuration
@@ -165,13 +157,20 @@ impl AppState {
         self.metrics.clone()
     }
 
-    /// Get reference to the hash cache
+    /// Get a reference to the hash cache
     ///
     /// The hash cache stores full model information from Ollama endpoints,
     /// including digests, sizes, and details. Populated during health checks
     /// and used by /api/tags to return accurate model metadata.
     pub fn model_cache(&self) -> ModelCache {
         Arc::clone(&self.model_cache)
+    }
+
+    /// Get a reference to the health checker for external use
+    ///
+    /// Used by /api/tags handler to filter out models from unhealthy endpoints.
+    pub fn health_checker(&self) -> &std::sync::Arc<crate::models::HealthChecker> {
+        self.selector.health_checker()
     }
 }
 

@@ -7,7 +7,7 @@
 
 use crate::config::Config;
 use crate::handlers::AppState;
-use crate::models::cache::ModelInfo;
+use crate::models::cache::{ModelInfo, ModelInfoExt};
 use axum::{Json, extract::State, response::IntoResponse};
 use std::collections::HashMap;
 
@@ -202,6 +202,7 @@ pub async fn handler(State(state): State<AppState>) -> impl IntoResponse {
         // Add discovered models from the cache (all models discovered from Ollama endpoints)
         // We skip virtual models (auto, fast, balanced, deep) which are added above
         // We also skip endpoint name mappings (e.g., "gemma3" endpoint pointing to "gemma4:31b")
+        // We also filter out models from unhealthy endpoints
         for (_key, info) in model_cache_guard.iter() {
             // Skip virtual tier names (these are added above with details)
             if info.name == "auto"
@@ -214,6 +215,10 @@ pub async fn handler(State(state): State<AppState>) -> impl IntoResponse {
             // Skip endpoint name mappings where the name doesn't match the actual model
             // Only return actual models where info.name == info.model
             if info.model != info.name {
+                continue;
+            }
+            // Skip models from unhealthy endpoints
+            if !info.is_healthy() {
                 continue;
             }
             models.push(model_to_tags(info));

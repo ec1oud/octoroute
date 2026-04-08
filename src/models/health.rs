@@ -4,7 +4,7 @@
 //! Endpoints that fail consecutive checks are marked unhealthy and excluded from selection.
 
 use crate::config::{Config, ModelEndpoint};
-use crate::models::cache::{ModelDetails, ModelInfo};
+use crate::models::cache::{ModelDetails, new_model_info};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -922,28 +922,28 @@ impl HealthChecker {
                         .to_string();
 
                     // Create model info with the actual Ollama model name as both name and model
-                    let model_info = ModelInfo {
-                        name: name.to_string(),
-                        model: name.to_string(),
-                        modified_at: modified_at.clone(),
-                        digest: format!("sha256:{}", digest.trim_start_matches("sha256:")),
+                    let model_info = new_model_info(
+                        name.to_string(),
+                        name.to_string(),
+                        modified_at.clone(),
+                        format!("sha256:{}", digest.trim_start_matches("sha256:")),
                         size,
-                        details: model_details,
-                    };
+                        model_details,
+                    );
 
                     // Cache by actual model name so all discovered models appear in /api/tags
                     let inserted = cache.insert(name.to_string(), model_info.clone()).is_none();
 
                     // Also cache by endpoint name for configured endpoint mappings
                     // This allows the /api/tags handler to look up by configured endpoint name
-                    let endpoint_mapping = ModelInfo {
-                        name: endpoint_name.to_string(),
-                        model: name.to_string(),
-                        modified_at: modified_at,
-                        digest: format!("sha256:{}", digest.trim_start_matches("sha256:")),
+                    let endpoint_mapping = new_model_info(
+                        endpoint_name.to_string(),
+                        name.to_string(),
+                        modified_at,
+                        format!("sha256:{}", digest.trim_start_matches("sha256:")),
                         size,
-                        details: model_info.details.clone(),
-                    };
+                        model_info.details.clone(),
+                    );
                     cache.insert(endpoint_name.to_string(), endpoint_mapping);
 
                     if inserted {

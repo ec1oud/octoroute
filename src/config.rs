@@ -1391,7 +1391,7 @@ strategy = "rule"
         // Verify health check URL uses /api/tags for Ollama
         assert_eq!(
             endpoint.health_check_url(),
-            "http://localhost:11434/v1/api/tags"
+            "http://localhost:11434/api/tags"
         );
     }
 
