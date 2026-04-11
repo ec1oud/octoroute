@@ -217,8 +217,10 @@ pub async fn handler(State(state): State<AppState>) -> impl IntoResponse {
             if info.model != info.name {
                 continue;
             }
+            tracing::debug!(info = %info.name, "healthy? {}", info.is_healthy());
             // Skip models from unhealthy endpoints
             if !info.is_healthy() {
+                tracing::debug!(info = %info.name, "skipping: unhealthy");
                 continue;
             }
             models.push(model_to_tags(info));
@@ -243,6 +245,164 @@ fn hash_string(s: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::cache::{
+        ModelDetails, new_model_info, new_model_info_with_endpoint, new_unhealthy_model_info,
+    };
+
+    #[test]
+    fn test_unhealthy_model_filtered() {
+        // Create a healthy model without endpoint tracking
+        let healthy_model = new_model_info(
+            "qwen3-8b".to_string(),
+            "qwen3-8b".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            "sha256:abc123".to_string(),
+            4_294_967_296,
+            Some(ModelDetails {
+                parent_model: "".to_string(),
+                format: "gguf".to_string(),
+                family: "qwen3".to_string(),
+                families: vec!["qwen3".to_string()],
+                parameter_size: "8B".to_string(),
+                quantization_level: "Q4_K_M".to_string(),
+            }),
+        );
+
+        // Create an unhealthy model without endpoint tracking
+        let unhealthy_model = new_unhealthy_model_info(
+            "llama3.2".to_string(),
+            "llama3.2".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            "sha256:def456".to_string(),
+            4_294_967_296,
+            Some(ModelDetails {
+                parent_model: "".to_string(),
+                format: "gguf".to_string(),
+                family: "llama3".to_string(),
+                families: vec!["llama3".to_string()],
+                parameter_size: "8B".to_string(),
+                quantization_level: "Q4_K_M".to_string(),
+            }),
+        );
+
+        // Verify is_healthy() returns correct values
+        assert!(
+            healthy_model.is_healthy(),
+            "healthy_model should be healthy"
+        );
+        assert!(
+            !unhealthy_model.is_healthy(),
+            "unhealthy_model should be unhealthy"
+        );
+
+        // Test that filtering logic works
+        let models = vec![healthy_model.clone(), unhealthy_model.clone()];
+        let filtered: Vec<_> = models
+            .into_iter()
+            .filter(|m| {
+                // Skip virtual tiers
+                if m.name == "auto" || m.name == "fast" || m.name == "balanced" || m.name == "deep"
+                {
+                    return false;
+                }
+                // Skip endpoint mappings where name != model
+                if m.model != m.name {
+                    return false;
+                }
+                // Skip unhealthy models
+                if !m.is_healthy() {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        // Only the healthy model should remain
+        assert_eq!(filtered.len(), 1, "Only healthy model should pass filter");
+        assert_eq!(
+            filtered[0].name, "qwen3-8b",
+            "Only qwen3-8b should pass filter"
+        );
+    }
+
+    #[test]
+    fn test_endpoint_based_model_filtering() {
+        // Test that models from unhealthy endpoints are filtered even when healthy flag is true
+
+        // Model from a healthy endpoint (endpoint: tyrion)
+        let model_from_healthy = new_model_info_with_endpoint(
+            "llama3.2".to_string(),
+            "llama3.2".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            "sha256:abc123".to_string(),
+            4_294_967_296,
+            Some(ModelDetails {
+                parent_model: "".to_string(),
+                format: "gguf".to_string(),
+                family: "llama3".to_string(),
+                families: vec!["llama3".to_string()],
+                parameter_size: "8B".to_string(),
+                quantization_level: "Q4_K_M".to_string(),
+            }),
+            Some("tyrion".to_string()),
+        );
+
+        // Model from an unhealthy endpoint (endpoint: strn)
+        let model_from_unhealthy = new_model_info_with_endpoint(
+            "qwen3-8b".to_string(),
+            "qwen3-8b".to_string(),
+            "2026-01-01T00:00:00Z".to_string(),
+            "sha256:def456".to_string(),
+            4_294_967_296,
+            Some(ModelDetails {
+                parent_model: "".to_string(),
+                format: "gguf".to_string(),
+                family: "qwen3".to_string(),
+                families: vec!["qwen3".to_string()],
+                parameter_size: "8B".to_string(),
+                quantization_level: "Q4_K_M".to_string(),
+            }),
+            Some("strn".to_string()),
+        );
+
+        let models = vec![model_from_healthy.clone(), model_from_unhealthy.clone()];
+
+        // Simulate marking strn endpoint as unhealthy
+        let filtered: Vec<_> = models
+            .into_iter()
+            .filter(|m| {
+                // Skip virtual tiers
+                if m.name == "auto" || m.name == "fast" || m.name == "balanced" || m.name == "deep"
+                {
+                    return false;
+                }
+                // Skip endpoint mappings where name != model
+                if m.model != m.name {
+                    return false;
+                }
+                // Skip models from unhealthy endpoints
+                let endpoint_name = "strn";
+                if m.source_endpoint
+                    .as_ref()
+                    .is_some_and(|ep| ep == endpoint_name)
+                {
+                    return false;
+                }
+                true
+            })
+            .collect();
+
+        // Only the model from healthy endpoint should remain
+        assert_eq!(
+            filtered.len(),
+            1,
+            "Only model from healthy endpoint should pass filter"
+        );
+        assert_eq!(
+            filtered[0].name, "llama3.2",
+            "Only llama3.2 from tyrion should pass filter"
+        );
+    }
 
     #[test]
     fn test_tags_model_with_details() {

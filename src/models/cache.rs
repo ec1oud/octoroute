@@ -32,6 +32,10 @@ pub struct ModelInfo {
     /// Skipped in serialization since this is internal tracking only
     #[serde(skip_serializing)]
     pub healthy: bool,
+    /// The endpoint name where this model was discovered
+    /// Used to mark all models from an endpoint as unhealthy when it fails
+    #[serde(skip_serializing)]
+    pub source_endpoint: Option<String>,
 }
 
 /// Creates a new healthy ModelInfo
@@ -45,6 +49,19 @@ pub fn new_model_info(
     size: u64,
     details: Option<ModelDetails>,
 ) -> ModelInfo {
+    new_model_info_with_endpoint(name, model, modified_at, digest, size, details, None)
+}
+
+/// Creates a new healthy ModelInfo with source endpoint tracking
+pub fn new_model_info_with_endpoint(
+    name: String,
+    model: String,
+    modified_at: String,
+    digest: String,
+    size: u64,
+    details: Option<ModelDetails>,
+    source_endpoint: Option<String>,
+) -> ModelInfo {
     ModelInfo {
         name,
         model,
@@ -53,6 +70,7 @@ pub fn new_model_info(
         size,
         details,
         healthy: true,
+        source_endpoint,
     }
 }
 
@@ -65,6 +83,19 @@ pub fn new_unhealthy_model_info(
     size: u64,
     details: Option<ModelDetails>,
 ) -> ModelInfo {
+    new_unhealthy_model_info_with_endpoint(name, model, modified_at, digest, size, details, None)
+}
+
+/// Creates a ModelInfo marked as unhealthy with source endpoint tracking
+pub fn new_unhealthy_model_info_with_endpoint(
+    name: String,
+    model: String,
+    modified_at: String,
+    digest: String,
+    size: u64,
+    details: Option<ModelDetails>,
+    source_endpoint: Option<String>,
+) -> ModelInfo {
     ModelInfo {
         name,
         model,
@@ -73,6 +104,7 @@ pub fn new_unhealthy_model_info(
         size,
         details,
         healthy: false,
+        source_endpoint,
     }
 }
 

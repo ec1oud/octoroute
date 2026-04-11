@@ -4,7 +4,9 @@
 //! Endpoints that fail consecutive checks are marked unhealthy and excluded from selection.
 
 use crate::config::{Config, ModelEndpoint};
-use crate::models::cache::{ModelDetails, new_model_info};
+use crate::models::cache::{
+    ModelDetails, new_model_info_with_endpoint, new_unhealthy_model_info_with_endpoint,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -326,6 +328,11 @@ impl EndpointHealth {
 
     /// Check if the endpoint is currently healthy
     pub fn is_healthy(&self) -> bool {
+        tracing::debug!(
+            endpoint_name = self.name(),
+            healthy = self.healthy,
+            "is_healthy"
+        );
         self.healthy
     }
 
@@ -698,6 +705,12 @@ impl HealthChecker {
 
         health.consecutive_failures = 0;
         health.healthy = true;
+        tracing::debug!(
+            endpoint_name = %health.name,
+            endpoint_url = %health.base_url,
+            consecutive_failures = health.consecutive_failures,
+            "Endpoint marked healthy"
+        );
         health.last_check = Instant::now();
 
         if was_unhealthy {
@@ -798,6 +811,9 @@ impl HealthChecker {
                         if let Ok(body) = response.json::<serde_json::Value>().await {
                             self.cache_ollama_hashes(&body, endpoint.name()).await;
                         }
+                    } else {
+                        // Endpoint responded but with an error status - mark cached models as unhealthy
+                        self.mark_models_unhealthy(endpoint.name()).await;
                     }
                     tracing::debug!(
                         endpoint_name = %endpoint.name(),
@@ -815,6 +831,8 @@ impl HealthChecker {
                         error = %e,
                         "Health check failed (Ollama)"
                     );
+                    // Endpoint is unreachable - mark cached models as unhealthy
+                    self.mark_models_unhealthy(endpoint.name()).await;
                     Ok(false)
                 }
             }
@@ -845,7 +863,7 @@ impl HealthChecker {
         }
     }
 
-    /// Parse Oollama /api/tags response and cache model digests
+    /// Parse Ollama /api/tags response and cache model digests
     ///
     /// The response format is:
     /// ```json
@@ -859,7 +877,29 @@ impl HealthChecker {
     ///   }
     /// }
     /// ```
+    /// Cache model info from a healthy Ollama endpoint response
     async fn cache_ollama_hashes(&self, response: &serde_json::Value, endpoint_name: &str) {
+        self.cache_ollama_hashes_with_health(response, endpoint_name, true)
+            .await;
+    }
+
+    /// Cache model info from an Ollama endpoint response, marking them as healthy or unhealthy
+    async fn cache_ollama_hashes_with_health(
+        &self,
+        response: &serde_json::Value,
+        endpoint_name: &str,
+        healthy: bool,
+    ) {
+        // When unhealthy, we don't have the response body, so just mark all cached models for this endpoint
+        if !healthy {
+            self.mark_models_unhealthy(endpoint_name).await;
+            return;
+        }
+        tracing::debug!(
+            endpoint_name = %endpoint_name,
+            healthy = %healthy,
+            "Caching healthy model info from Ollama endpoint",
+        );
         if let Some(models) = response.get("models").and_then(|m| m.as_array()) {
             let mut cache = self.model_cache.write().await;
             for model in models {
@@ -922,38 +962,77 @@ impl HealthChecker {
                         .to_string();
 
                     // Create model info with the actual Ollama model name as both name and model
-                    let model_info = new_model_info(
-                        name.to_string(),
-                        name.to_string(),
-                        modified_at.clone(),
-                        format!("sha256:{}", digest.trim_start_matches("sha256:")),
-                        size,
-                        model_details,
-                    );
+                    let model_info = if healthy {
+                        new_model_info_with_endpoint(
+                            name.to_string(),
+                            name.to_string(),
+                            modified_at.clone(),
+                            format!("sha256:{}", digest.trim_start_matches("sha256:")),
+                            size,
+                            model_details,
+                            Some(endpoint_name.to_string()),
+                        )
+                    } else {
+                        new_unhealthy_model_info_with_endpoint(
+                            name.to_string(),
+                            name.to_string(),
+                            modified_at.clone(),
+                            format!("sha256:{}", digest.trim_start_matches("sha256:")),
+                            size,
+                            model_details,
+                            Some(endpoint_name.to_string()),
+                        )
+                    };
 
                     // Cache by actual model name so all discovered models appear in /api/tags
                     let inserted = cache.insert(name.to_string(), model_info.clone()).is_none();
 
                     // Also cache by endpoint name for configured endpoint mappings
                     // This allows the /api/tags handler to look up by configured endpoint name
-                    let endpoint_mapping = new_model_info(
-                        endpoint_name.to_string(),
-                        name.to_string(),
-                        modified_at,
-                        format!("sha256:{}", digest.trim_start_matches("sha256:")),
-                        size,
-                        model_info.details.clone(),
-                    );
+                    let endpoint_mapping = if healthy {
+                        new_model_info_with_endpoint(
+                            endpoint_name.to_string(),
+                            name.to_string(),
+                            modified_at,
+                            format!("sha256:{}", digest.trim_start_matches("sha256:")),
+                            size,
+                            model_info.details.clone(),
+                            Some(endpoint_name.to_string()),
+                        )
+                    } else {
+                        new_unhealthy_model_info_with_endpoint(
+                            endpoint_name.to_string(),
+                            name.to_string(),
+                            modified_at,
+                            format!("sha256:{}", digest.trim_start_matches("sha256:")),
+                            size,
+                            model_info.details.clone(),
+                            Some(endpoint_name.to_string()),
+                        )
+                    };
                     cache.insert(endpoint_name.to_string(), endpoint_mapping);
 
                     if inserted {
                         tracing::info!(
+                        endpoint_name = %endpoint_name,
+                        model_name = %name,
+                        digest = %digest,
+                        healthy = %healthy,
+                        "Cached full model info from Ollama endpoint (cached by name: {} and endpoint: {}, healthy: {})",
+                        name,
+                        endpoint_name,
+                        healthy
+                        );
+                    } else {
+                        // Update existing entry
+                        tracing::debug!(
                             endpoint_name = %endpoint_name,
                             model_name = %name,
-                            digest = %digest,
-                            "Cached full model info from Ollama endpoint (cached by name: {} and endpoint: {})",
+                            healthy = %healthy,
+                            "Updated model info cache for endpoint (cached by name: {} and endpoint: {}, healthy: {})",
                             name,
-                            endpoint_name
+                            endpoint_name,
+                            healthy
                         );
                     }
                 }
@@ -961,7 +1040,33 @@ impl HealthChecker {
         }
     }
 
-    /// Run health checks on all endpoints once
+    /// Mark all cached models for an endpoint as unhealthy
+    async fn mark_models_unhealthy(&self, endpoint_name: &str) {
+        let mut cache = self.model_cache.write().await;
+        let mut marked_count = 0;
+        // Find all entries that came from this endpoint by checking source_endpoint
+        for (_key, entry) in cache.iter_mut() {
+            // Check if this entry was discovered from this endpoint
+            if entry
+                .source_endpoint
+                .as_ref()
+                .is_some_and(|ep| ep == endpoint_name)
+            {
+                entry.healthy = false;
+                marked_count += 1;
+            }
+        }
+        if marked_count > 0 {
+            tracing::info!(
+                endpoint_name = %endpoint_name,
+                models_marked = %marked_count,
+                "Marked {} models as unhealthy for endpoint '{}'",
+                marked_count,
+                endpoint_name
+            );
+        }
+    }
+
     async fn run_health_checks(&self) {
         let endpoints: Vec<ModelEndpoint> = {
             let config = &self.config;
